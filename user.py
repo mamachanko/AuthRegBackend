@@ -17,6 +17,14 @@ def registrationKey(username):
 	sha1.update(username + salt)
 	return sha1.hexdigest()
 
+def inTime(date, expiration_date):
+	"""
+	Check whether a date has not crossed a certain expiration date.
+	"""
+	if expiration_date > date:
+		return True
+	return False
+
 def exists(username):
 	"""
 	Check whether user with the given name already exists in the given db.
@@ -120,13 +128,9 @@ class User(object):
 		else:
 			dbmanager.insertUser(self)
 
-	def inTime(self, date):
-		if self.key_expiration > date:
-			return True
-		return False
 
 	def activate(self, suppliedkey):
-		if suppliedkey == self.registration_key and inTime(datetime.datetime.now()):
+		if suppliedkey == self.registration_key and inTime(datetime.datetime.now(), self.key_expiration):
 			self.activated = True
 			return True
 		return False
