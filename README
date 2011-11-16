@@ -1,0 +1,55 @@
+### A Minimal Backend for User Registration, Authentication and Authorization
+
+## Preamble
+This module is supposed to be only dependent on Python modules that are shipped
+by default. This module is supposed to run with Python 2.6 otherwise the test
+suite may not run. The database used is an SQLite3 database out of simplistic
+considerations. As mentioned all major functionality is being tested within
+the test suite which resides in 'test.py'. Run 'python test.py' for testing.
+Some design decisions have been influenced by experience with Django.
+
+## Files
+'test.py' - the test suite
+'config.py' - houses global parameters like the failed login tolerance
+'user.py' - the user class
+'db.py' - the database interface
+
+## Requirements and Realisation
+A minimal database-based backend was supposed to be implemented that allows for
+user registration, authentication and authorization. In details the requirements
+and their respective realisations are the following.
+
+# Registration
+After a user is created he must be activated within a certain period of time.
+It should expire if this period is over. The activation should happen by the
+user supplying the certain registration key and thereby showing that the given
+email adress is correct.
+The registration key is created by computing the SHA1 hash of the username with
+some random salt. This is to prohibit forgery of the key by simply hashing the
+username. If the activation attempt happens after the expiration date, the account
+is expired.
+
+# Authentication
+Users should supply their email and their password to login. After successive
+failing login attempts with a wrong password the account should be locked for
+a certain period.
+The users password is not stored as clear text in the db but as it's SHA1 hash.
+To login the email and the password have to be supplied. If the supplied password's
+SHA1 hash matches the value in the database and if the email is correct, the user
+is login until he logs out. In the case of a login attempt with a wrong password
+a counter will be incremented. If this counter reaches a certain value the
+account will be locked for a certain period. If the account should unlock is decided
+upon the next login attempt. If so it unlocks otherwise it stays locked.
+The counter resets after any successful login.
+
+# Authorization
+A user should be only granted access to a certain resource if his account is
+existing and he owns certain permissions.
+This issue is approached by the use of authorization groups. In the tested
+case two basic groups have been created, namely 'non-admins' and 'admins'.
+Any user has to be member of either. A user now provides a method to determine
+whether he is an admin or not. Thereby it can be decided if this particular
+user should be granted access to a certain resource or not.
+A factual mapping of users unto potential resources has not been implemented.
+The decision was to provide means by which the permission level of a user could
+be investigated. The introduction of authorization groups seemed reasonable.

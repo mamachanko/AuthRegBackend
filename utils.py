@@ -1,8 +1,6 @@
 # /usr/bin/python
 
-##
 # Help functions and utilities
-##
 
 import hashlib
 import datetime

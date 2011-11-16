@@ -13,6 +13,11 @@ from config import DATABASE_PATH, EXPIRATION_PERIOD, FAILED_LOGIN_TOLERANCE, LOC
 from utils import *
 
 class RegAndAuthBackendTests(unittest.TestCase):
+	"""
+	This class is a test suite for the registration and authentication backend.
+	It tests the helper functions, the behaviour of User class and it's interaction
+	with the database.
+	"""
 
 	def setUp(self):
 		"""
@@ -119,6 +124,8 @@ class RegAndAuthBackendTests(unittest.TestCase):
 		userobj.activate(rightkey, later)
 		# should not be active
 		self.assertFalse(userobj.isActive())
+		# but expired
+		self.assertTrue(userobj.isExpired())
 
 		# now activate with the right key
 		userobj.activate(rightkey)
@@ -144,7 +151,7 @@ class RegAndAuthBackendTests(unittest.TestCase):
 		self.assertFalse(self.dbmanager.getUser(username = userobj.username).isLoggedIn())
 
 		# try to login correctly
-		userobj.login(username = self.username, password = self.password)
+		userobj.login(email = self.email, password = self.password)
 		self.assertTrue(userobj.isLoggedIn())
 		self.assertTrue(self.dbmanager.getUser(username = userobj.username).isLoggedIn())
 		# and logout
@@ -152,15 +159,15 @@ class RegAndAuthBackendTests(unittest.TestCase):
 		self.assertFalse(userobj.isLoggedIn())
 		self.assertFalse(self.dbmanager.getUser(username = userobj.username).isLoggedIn())
 
-		# try with wrong username
-		userobj.login(username = 'notjustaname', password = self.password)
+		# try with wrong email
+		userobj.login(email = 'wrong@email.com', password = self.password)
 		# shouldn't be logged in
 		self.assertFalse(userobj.isLoggedIn())
 		self.assertFalse(self.dbmanager.getUser(username = userobj.username).isLoggedIn())
 
 		# try with wrong password
 		trials = userobj.failed_logins
-		userobj.login(username = self.username, password = 'wrongpass')
+		userobj.login(email = self.email, password = 'wrongpass')
 		# shouldn't be logged in
 		self.assertFalse(userobj.isLoggedIn())
 		self.assertFalse(self.dbmanager.getUser(username = userobj.username).isLoggedIn())
@@ -170,24 +177,41 @@ class RegAndAuthBackendTests(unittest.TestCase):
 
 		# test locking
 		# login and out to reset counter
-		userobj.login(self.username, self.password)
+		userobj.login(self.email, self.password)
 		userobj.logout()
 		# is reset?
 		self.assertEquals(userobj.failed_logins, 0)
 		self.assertEquals(self.dbmanager.getUser(username = userobj.username).failed_logins, 0)
 		# lock user by attempting to login with wrong password several times
 		for i in range(FAILED_LOGIN_TOLERANCE+1):
-			userobj.login(username = self.username, password = 'wrongpass%s' % i)
+			userobj.login(email = self.email, password = 'wrongpass%s' % i)
 		self.assertTrue(userobj.isLocked())
 		self.assertTrue(self.dbmanager.getUser(username = userobj.username).isLocked())
 		# should unlock after LOCKOUT_PERIOD
 		seconds = LOCKOUT_PERIOD.total_seconds()
-		print 'wait %s secs for unlock' % seconds
+		print 'wait %s secs to unlock' % seconds
 		time.sleep(seconds)
 		self.assertFalse(userobj.isLocked())
 		self.assertFalse(self.dbmanager.getUser(username = userobj.username).isLocked())
+	
+	def test_authorization(self):
+		"""
+		Test user authorization.
+		"""
+		# create a standard user and activate it
+		nonadmin = user.User(username = 'noadmin', email = 'mail@mailing.com', password = 'hellopass', authgroup = 'non-admin')
+		nonadmin.save()
+		nonadmin.activate(nonadmin.registration_key)
+		# shouldn't be admin
+		self.assertFalse(nonadmin.isAdmin())
 
+		# and an admin user and activate as well
+		admin = user.User(username = 'admin', email = 'mail123@admin.com', password = 'hejpass', authgroup = 'admin')
+		admin.save()
+		admin.activate(admin.registration_key)
+		# should be admin
+		self.assertTrue(admin.isAdmin())
 
 if __name__ == '__main__':
 	suite = unittest.TestLoader().loadTestsFromTestCase(RegAndAuthBackendTests)
-	unittest.TextTestRunner(verbosity=2).run(suite)
+	unittest.TextTestRunner(verbosity=1).run(suite)

@@ -1,5 +1,7 @@
 # /usr/bin/python
 
+# global settings and values
+
 import datetime
 
 DATABASE_PATH = './production.db'
@@ -11,4 +13,5 @@ FAILED_LOGIN_TOLERANCE = 5
 TESTING = True
 if TESTING:
 	DATABASE_PATH = './test.db'
-	LOCKOUT_PERIOD = datetime.timedelta(seconds=2)
+	EXPIRATION_PERIOD = datetime.timedelta(seconds=1)
+	LOCKOUT_PERIOD = datetime.timedelta(seconds=1)

@@ -5,25 +5,12 @@ from config import DATABASE_PATH
 from utils import *
 from user import User
 
-AUTHGROUP_TABLE_CREATION = """CREATE TABLE authgroup
-(id INTEGER PRIMARY KEY,
-name TEXT UNIQUE);"""
-
-USER_TABLE_CREATION = """CREATE TABLE user
-(id INTEGER PRIMARY KEY,
-username TEXT UNIQUE,
-email TEXT,
-password TEXT,
-authgroup_id NOT NULL REFERENCES authgroup,
-registration_key TEXT,
-key_expires_on TEXT,
-activated BOOLEAN,
-expired BOOLEAN,
-logged_in BOOLEAN,
-failed_logins INTEGER,
-locked BOOLEAN,
-locked_until TEXT)"""
-
+# SQL statements without bindings
+AUTHGROUP_TABLE_CREATION = 'CREATE TABLE authgroup (id INTEGER PRIMARY KEY, name TEXT UNIQUE);'
+USER_TABLE_CREATION = """CREATE TABLE user (id INTEGER PRIMARY KEY, username TEXT UNIQUE, email TEXT, password TEXT,
+			authgroup_id NOT NULL REFERENCES authgroup, registration_key TEXT, key_expires_on TEXT,
+			activated BOOLEAN, expired BOOLEAN, logged_in BOOLEAN, failed_logins INTEGER, locked BOOLEAN,
+			locked_until TEXT)"""
 GROUP_INSERT = 'INSERT INTO authgroup VALUES(null, ?)'
 GROUP_GET_NAME = 'SELECT name FROM authgroup WHERE id = ?'
 USER_INSERT = 'INSERT INTO user VALUES(null, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
@@ -32,6 +19,11 @@ USER_GET = 'SELECT * FROM user WHERE username = ?'
 USER_UPDATE = 'UPDATE user SET activated = ?, expired = ?, logged_in = ?, failed_logins = ?, locked = ?, locked_until = ? WHERE username = ?'
 
 class DBManager(object):
+	"""
+	This class represents the interface to the database. It provides
+	methods for storing, retrieving and updating users and authgroups.
+	The database is an SQLite3 database.
+	"""
 
 	def __init__(self):
 		self.conn = sqlite3.connect(DATABASE_PATH)
@@ -103,15 +95,16 @@ class DBManager(object):
 		bindings = (userobj.activated, userobj.expired, userobj.logged_in, userobj.failed_logins, userobj.locked, userobj.locked_until, userobj.username,)
 		self.cursor.execute(USER_UPDATE, bindings)
 		self.conn.commit()
-		#print 'updated user with username: "%s"' % userobj.username
 
 	def getUser(self, username):
 		"""
 		Retrieve a user by it's name.
 		"""
+		# throw exception if it doesn't exist
 		if not self.userExists(username):
 			raise UserDoesNotExistException(username)
 		else:
+			# scrap the parameters and set up a dictionairy
 			details = self.getUserDetails(username)[0][1:]
 			d = {'username' : details[0],
                         'email' : details[1],
@@ -127,4 +120,5 @@ class DBManager(object):
 			'locked_until' : datetime.datetime.strptime(details[11], "%Y-%m-%d %H:%M:%S.%f")}
 			d['authgroup'] = self.getAuthGroupName(d['authgroupid'])
 			d.pop('authgroupid')
+			# return a user constructed from the dictionairy
 			return User(**d)
