@@ -1,8 +1,6 @@
 import unittest
 import db
 import user
-import registration
-import auth
 import sqlite3
 import os
 import hashlib
