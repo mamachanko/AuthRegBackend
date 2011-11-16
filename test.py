@@ -8,7 +8,9 @@ import os
 import hashlib
 import re
 import datetime
-from config import DATABASE_PATH
+import time
+from config import DATABASE_PATH, EXPIRATION_PERIOD, FAILED_LOGIN_TOLERANCE, LOCKOUT_PERIOD
+from utils import *
 
 class RegAndAuthBackendTests(unittest.TestCase):
 
@@ -61,28 +63,35 @@ class RegAndAuthBackendTests(unittest.TestCase):
 		self.assertTrue(user.inTime(date + datetime.timedelta(days=1), expiration_date))
 		self.assertFalse(user.inTime(date + datetime.timedelta(days=2), expiration_date))
 		self.assertFalse(user.inTime(date + datetime.timedelta(days=2, minutes=1), expiration_date))
-		
 
 	def test_user_creation(self):
 		"""
 		Test user creation.
 		"""
 		# user should not yet exist
-		self.assertFalse(user.exists(username = self.username))
+		self.assertFalse(self.dbmanager.userExists(username = self.username))
 		# create it
 		userobj = user.User(username = self.username, email = self.email, password = self.password, authgroup = 'non-admin')
 		userobj.save()
 		# now it should exist
-		self.assertTrue(user.exists(username = self.username))
+		self.assertTrue(self.dbmanager.userExists(username = self.username))
 		# and now it should be retrievable from the db
-		userobj = user.getUser(username = self.username)
+		userobj = self.dbmanager.getUser(username = self.username)
 		# with appropriate parameters being set
 		self.assertEquals(userobj.username, self.username)
 		self.assertEquals(userobj.email, self.email)
-		self.assertEquals(userobj.password, self.password)
 		self.assertFalse(userobj.isActive())
 		self.assertFalse(userobj.isLoggedIn())
 		self.assertFalse(userobj.isLocked())
+
+		# the user's password should not be stored as clear text
+		self.assertNotEquals(userobj.password, self.password)
+		# and should have propageted to the db
+		self.assertNotEquals(self.dbmanager.getUser(self.username).password, self.password)
+		# instead it should be stored as the password's hash
+		self.assertEquals(userobj.password, sha1Hash(self.password))
+		# and should have propageted to the db
+		self.assertEquals(self.dbmanager.getUser(self.username).password, sha1Hash(self.password))
 
 	def test_user_activation(self):
 		"""
@@ -99,14 +108,85 @@ class RegAndAuthBackendTests(unittest.TestCase):
 		# he should not be active
 		self.assertFalse(userobj.isActive())
 		# that should be in the db as well
-		self.assertFalse(user.getUser(self.username).isActive())
+		self.assertFalse(self.dbmanager.getUser(self.username).isActive())
+
+		# the right key
+		rightkey = userobj.registration_key
+
+		# check whether the expiration period works
+		# and restricts activation to the expiration period
+		later = datetime.datetime.now() + EXPIRATION_PERIOD
+		userobj.activate(rightkey, later)
+		# should not be active
+		self.assertFalse(userobj.isActive())
 
 		# now activate with the right key
-	 	userobj.activate(userobj.registration_key)
+		userobj.activate(rightkey)
 		# should be active
 		self.assertTrue(userobj.isActive())
 		# that should be in the db as well
-		self.assertTrue(user.getUser(self.username).isActive())
+		self.assertTrue(self.dbmanager.getUser(self.username).isActive())
+
+	def test_login(self):
+		"""
+		Test login and logout of a user.
+		"""
+		# create a user
+		userobj = user.User(username = self.username, email = self.email, password = self.password, authgroup = 'non-admin')
+		userobj.save()
+		# shouldn't be logged in, because not active
+		self.assertFalse(userobj.isLoggedIn())
+		self.assertFalse(self.dbmanager.getUser(username = userobj.username).isLoggedIn())
+		# activate
+		userobj.activate(userobj.registration_key)
+		# still shouldn't be logged in
+		self.assertFalse(userobj.isLoggedIn())
+		self.assertFalse(self.dbmanager.getUser(username = userobj.username).isLoggedIn())
+
+		# try to login correctly
+		userobj.login(username = self.username, password = self.password)
+		self.assertTrue(userobj.isLoggedIn())
+		self.assertTrue(self.dbmanager.getUser(username = userobj.username).isLoggedIn())
+		# and logout
+		userobj.logout()
+		self.assertFalse(userobj.isLoggedIn())
+		self.assertFalse(self.dbmanager.getUser(username = userobj.username).isLoggedIn())
+
+		# try with wrong username
+		userobj.login(username = 'notjustaname', password = self.password)
+		# shouldn't be logged in
+		self.assertFalse(userobj.isLoggedIn())
+		self.assertFalse(self.dbmanager.getUser(username = userobj.username).isLoggedIn())
+
+		# try with wrong password
+		trials = userobj.failed_logins
+		userobj.login(username = self.username, password = 'wrongpass')
+		# shouldn't be logged in
+		self.assertFalse(userobj.isLoggedIn())
+		self.assertFalse(self.dbmanager.getUser(username = userobj.username).isLoggedIn())
+		# trial counter should have been incremented
+		self.assertEquals(trials+1, userobj.failed_logins)
+		self.assertEquals(self.dbmanager.getUser(username = userobj.username).failed_logins, trials+1)
+
+		# test locking
+		# login and out to reset counter
+		userobj.login(self.username, self.password)
+		userobj.logout()
+		# is reset?
+		self.assertEquals(userobj.failed_logins, 0)
+		self.assertEquals(self.dbmanager.getUser(username = userobj.username).failed_logins, 0)
+		# lock user by attempting to login with wrong password several times
+		for i in range(FAILED_LOGIN_TOLERANCE+1):
+			userobj.login(username = self.username, password = 'wrongpass%s' % i)
+		self.assertTrue(userobj.isLocked())
+		self.assertTrue(self.dbmanager.getUser(username = userobj.username).isLocked())
+		# should unlock after LOCKOUT_PERIOD
+		seconds = LOCKOUT_PERIOD.total_seconds()
+		print 'wait %s secs for unlock' % seconds
+		time.sleep(seconds)
+		self.assertFalse(userobj.isLocked())
+		self.assertFalse(self.dbmanager.getUser(username = userobj.username).isLocked())
+
 
 if __name__ == '__main__':
 	suite = unittest.TestLoader().loadTestsFromTestCase(RegAndAuthBackendTests)

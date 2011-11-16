@@ -4,81 +4,13 @@ import hashlib
 import random
 import datetime
 import db
-from config import EXPIRATION_PERIOD, DATABASE_PATH
-
-def registrationKey(username):
-	"""
-	Generates a registration key by computing the value
-	of SHA1 given the username and some random salt.
-	"""
-	sha1 = hashlib.sha1()
-	sha1.update(str(random.random()))
-	salt = sha1.hexdigest()[:4]
-	sha1.update(username + salt)
-	return sha1.hexdigest()
-
-def inTime(date, expiration_date):
-	"""
-	Check whether a date has not crossed a certain expiration date.
-	"""
-	if expiration_date > date:
-		return True
-	return False
-
-def exists(username):
-	"""
-	Check whether user with the given name already exists in the given db.
-	"""
-	dbmanager = db.DBManager()
-	return dbmanager.userExists(username)
-
-def getUser(username):
-	"""
-	Retrieve a user by it's name.
-	"""
-	dbmanager = db.DBManager()
-	if not dbmanager.userExists(username):
-		raise UserDoesNotExistException(username)
-	else:
-		details = dbmanager.getUser(username)[0][1:]
-		d = {'username' : details[0],
-			'email' : details[1],
-			'password' : details[2],
-			'authgroupid' : details[3],
-			'activated' : bool(details[6]),
-			'expired' : bool(details[7]),
-			'logged_in' : bool(details[8]),
-			'failed_logins' : details[9],
-			'locked' : bool(details[10]),
-			'registration_key' : details[4],
-			'key_expiration' : datetime.datetime.strptime(details[5], "%Y-%m-%d %H:%M:%S.%f")}
-		d['authgroup'] = dbmanager.getAuthGroupName(d['authgroupid'])
-		d.pop('authgroupid')
-		return User(**d)
-
-class UserExistsException(Exception):
-	"""
-	An Exception representing that a user that should be saved already exists.
-	"""
-	def __init__(self, username):
-		self.username = username
-
-	def __str__(self):
-		return repr(self.username) + 'already exists'
-
-class UserDoesNotExistException(Exception):
-	"""
-	An Exception representing that a user does not yet exist.
-	"""
-	def __init__(self, username):
-		self.username = username
-
-	def __str__(self):
-		return repr(self.username) + 'does not yet exist'
+from config import EXPIRATION_PERIOD, DATABASE_PATH, FAILED_LOGIN_TOLERANCE, LOCKOUT_PERIOD
+from utils import *
 
 class User(object):
 
-	def __init__(self, username, password, email, authgroup, activated=None, expired=None, logged_in=None, failed_logins=None, locked=None, registration_key=None, key_expiration=None):
+	def __init__(self, username, password, email, authgroup, activated=None, expired=None, logged_in=None, failed_logins=None, locked=None, registration_key=None, key_expiration=None, locked_until=None):
+		# set the user's details and credentials
 		self.username = username
 		self.email = email
 		self.password = password
@@ -113,10 +45,20 @@ class User(object):
 			self.key_expiration = datetime.datetime.now() + EXPIRATION_PERIOD
 		else:
 			self.key_expiration = key_expiration
-	
+		if locked_until == None:
+			# if locked_until is not supplied it's valued doesn't matter
+			# so it just should be set to a correct date value
+			self.locked_until = datetime.datetime.now()
+		else:
+			self.locked_until = locked_until
+
 		# if newUser is True the registration key needs to be transmitted to
-		# the user's email somehow
-		self.sendActivationEmail()
+		# the user's email and his password will be hashed instead of
+		# storing it as real text
+		if newUser:
+			self.password = sha1Hash(self.password)
+			self.sendActivationEmail()
+
 
 	def save(self):
 		"""
@@ -128,17 +70,99 @@ class User(object):
 		else:
 			dbmanager.insertUser(self)
 
+	def update(self):
+		"""
+		Propagates the current user state to the database via
+		the database manager.
+		"""
+		# get the manager
+		dbmanager = db.DBManager()
+		# and to update
+		dbmanager.updateUser(self)
+		return True
 
-	def activate(self, suppliedkey):
-		if suppliedkey == self.registration_key and inTime(datetime.datetime.now(), self.key_expiration):
-			self.activated = True
-			return True
-		return False
+	def activate(self, suppliedkey, now = datetime.datetime.now()):
+		"""
+		Activates a user if the supplied activation key is correct and
+		the point in time is within the expiration period. If the key is
+		incorrect the user will not be activated. If the expiration date
+		is crossed the user will be expired.
+		Returns True if activation is in time and the key is correct,
+		False otherwise.
+		"""
+		# variable to store success of the activation attempt
+		isokay = False
+		if inTime(now, self.key_expiration):
+			if suppliedkey == self.registration_key:
+				self.activated = True
+				# success
+				isokay = not isokay
+		else:
+			self.expired = True
+		# update user object
+		self.update()
+		return isokay
+
+	def login(self, username, password):
+		"""
+		Login the user. The username and the password must both
+		be provided as further security measure in case two user's
+		incidentally share the same password.
+		If values are correct the user will be logged in until he
+		logs out. If the password is wrong the failed attempts will
+		be counted and finally result in a locked account for some
+		time. A correct login will reset the failed counter. It will
+		also be reset when being locked out. The user will stay
+		logged in until logout() is called.
+		"""
+		# check if the correct user is meant at all
+		# or if the user is already logged in
+		if username != self.username:
+			# don't proceed in these cases
+			return False
+		# is the user allowed to login?
+		if self.isLocked():
+			# if not, don't proceed
+			return False
+		# otherwise check the password's credibility
+		if sha1Hash(password) == self.password:
+			# correct login
+			self.logged_in = True
+			self.failed_logins = 0
+		else:
+			# incorrect login
+			self.logged_in = False
+			self.failed_logins += 1
+			if self.failed_logins > FAILED_LOGIN_TOLERANCE:
+				self.locked = True
+				self.locked_until = datetime.datetime.now() + LOCKOUT_PERIOD
+		# propagate to db
+		self.update()
+
+	def logout(self):
+		"""
+		Logout the user.
+		"""
+		# this operation is not as critical so no checks are done
+		self.logged_in = False
+		self.update()
 
 	def isActive(self):
 		return self.activated
 
 	def isLocked(self):
+		"""
+		Checks whether a user is locked by considering his
+		locked status with respect to the lockout period.
+		"""
+		# if he's locked out
+		if self.locked:
+			# check whether the lockout period is still active
+			now = datetime.datetime.now()
+			if now > self.locked_until:
+				# lockout period is over
+				# unlock
+				self.locked = False
 		return self.locked
 
 	def isLoggedIn(self):

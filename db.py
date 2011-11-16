@@ -2,6 +2,8 @@
 
 import sqlite3
 from config import DATABASE_PATH
+from utils import *
+from user import User
 
 AUTHGROUP_TABLE_CREATION = """CREATE TABLE authgroup
 (id INTEGER PRIMARY KEY,
@@ -19,13 +21,15 @@ activated BOOLEAN,
 expired BOOLEAN,
 logged_in BOOLEAN,
 failed_logins INTEGER,
-locked BOOLEAN)"""
+locked BOOLEAN,
+locked_until TEXT)"""
 
 GROUP_INSERT = 'INSERT INTO authgroup VALUES(null, ?)'
 GROUP_GET_NAME = 'SELECT name FROM authgroup WHERE id = ?'
-USER_INSERT = 'INSERT INTO user VALUES(null, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+USER_INSERT = 'INSERT INTO user VALUES(null, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
 USER_EXISTS = 'SELECT * FROM user WHERE username = ?'
 USER_GET = 'SELECT * FROM user WHERE username = ?'
+USER_UPDATE = 'UPDATE user SET activated = ?, expired = ?, logged_in = ?, failed_logins = ?, locked = ?, locked_until = ? WHERE username = ?'
 
 class DBManager(object):
 
@@ -37,15 +41,6 @@ class DBManager(object):
 		"""
 		Maps Booleans onto integers: True -> 1, False -> 0
 		Non-Booleans don't get mapped.
-
-		#doctest
-		>>> dbmanager = DBManager('./test.db')
-		>>> DBManager.__bool2int__(dbmanager, True)
-		1
-		>>> DBManager.__bool2int__(dbmanager, False)
-		0
-		>>> DBManager.__bool2int__(dbmanager, 'astring')
-		'astring'
 		"""
 		if isinstance(value, bool):
 			return int(value)
@@ -74,7 +69,7 @@ class DBManager(object):
 		authgroup_id = self.cursor.execute('SELECT id FROM authgroup WHERE name = ?', (authgroup,)).fetchone()[0]
 		bindings = map(self.__bool2int__, [user.username, user.email, user.password, authgroup_id, user.registration_key,
 						str(user.key_expiration), user.activated, user.expired, user.logged_in,
-						user.failed_logins, user.locked])
+						user.failed_logins, user.locked, user.locked_until])
 		self.cursor.execute(USER_INSERT, bindings)
 		self.conn.commit()
 
@@ -94,9 +89,42 @@ class DBManager(object):
 		result = self.cursor.execute(GROUP_GET_NAME, (groupid,))
 		return result.fetchone()[0]
 
-	def getUser(self, username):
+	def getUserDetails(self, username):
 		"""
-		Retrieve an existing user by it's name and return the details.
+		Retrieve an existing user's details from the db.
 		"""
 		result = self.cursor.execute(USER_GET, (username,))
 		return result.fetchall()
+
+	def updateUser(self, userobj):
+		"""
+		Propagates the current state of the given user object to the database.
+		"""
+		bindings = (userobj.activated, userobj.expired, userobj.logged_in, userobj.failed_logins, userobj.locked, userobj.locked_until, userobj.username,)
+		self.cursor.execute(USER_UPDATE, bindings)
+		self.conn.commit()
+		#print 'updated user with username: "%s"' % userobj.username
+
+	def getUser(self, username):
+		"""
+		Retrieve a user by it's name.
+		"""
+		if not self.userExists(username):
+			raise UserDoesNotExistException(username)
+		else:
+			details = self.getUserDetails(username)[0][1:]
+			d = {'username' : details[0],
+                        'email' : details[1],
+                        'password' : details[2],
+                        'authgroupid' : details[3],
+                        'activated' : bool(details[6]),
+                        'expired' : bool(details[7]),
+                        'logged_in' : bool(details[8]),
+                        'failed_logins' : details[9],
+                        'locked' : bool(details[10]),
+                        'registration_key' : details[4],
+                        'key_expiration' : datetime.datetime.strptime(details[5], "%Y-%m-%d %H:%M:%S.%f"),
+			'locked_until' : datetime.datetime.strptime(details[11], "%Y-%m-%d %H:%M:%S.%f")}
+			d['authgroup'] = self.getAuthGroupName(d['authgroupid'])
+			d.pop('authgroupid')
+			return User(**d)
